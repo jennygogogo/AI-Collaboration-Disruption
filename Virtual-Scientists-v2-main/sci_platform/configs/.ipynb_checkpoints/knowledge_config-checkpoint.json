@@ -1,0 +1,23 @@
+[
+    {
+      "knowledge_id": "professional paper",
+      "emb_model_config_name": "ollama_embedding-mxbai-embed-large",
+      "data_processing": [
+        {
+          "load_data": {
+            "loader": {
+              "create_object": true,
+              "module": "llama_index.core",
+              "class": "SimpleDirectoryReader",
+              "init_args": {
+                "input_dir": "/inspire/hdd/project/aiscientist/hufang-CZXS24220079/Virtual-Scientists-main/Data/Authors/books_OAG_10000_after",
+                "required_exts": [
+                  ".txt"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]

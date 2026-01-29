@@ -1,0 +1,99 @@
+from time import sleep
+import logging
+from camel.configs import ChatGPTConfig, OpenSourceConfig
+
+from camel.models import BaseModelBackend, ModelFactory
+from camel.types import ModelPlatformType, ModelType
+
+thread_log = logging.getLogger(name='inference.thread')
+thread_log.setLevel('DEBUG')
+
+class SharedMemory:
+    Message_ID = 0
+    Message = None
+    Response = None
+    Busy = False
+    Working = False
+    Done = False
+
+class InferenceThread:
+    def __init__(
+        self,
+        model_path:
+        str = "API", 
+        server_url: str = "http://127.0.0.1:8000/v1",
+        stop_tokens: list[str] = None,
+        model_platform_type: ModelPlatformType = ModelPlatformType.VLLM,
+        model_type: str = "llama3.1",
+        embed_model_type: str = "mxbai-embed-large",
+        temperature: float = 0.5,
+        shared_memory: SharedMemory = None
+    ):
+        self.alive = True
+        self.count = 0
+        self.server_url = server_url
+        self.model_type = model_type
+        self.embed_model_type = embed_model_type
+
+        # 打印调试信息，确认当前线程连接的 URL 和任务类型
+        print(f'[{server_url}] Init Thread | Model: {self.model_type} | Embed: {self.embed_model_type}')
+
+        # === 核心修改逻辑 ===
+        # 根据是否传入 embed_model_type 来判断应该使用哪个后端平台
+        
+        if self.embed_model_type is None:
+            # 1. 生成任务 (Generation) -> 使用 vLLM
+            # 注意：确保 sci_platform_fast.py 里生成任务传进来的 server_url 是 vLLM 的端口 (如 8000)
+            current_platform = ModelPlatformType.VLLM
+            current_config = {}
+            print(f"  -> Selected Backend: vLLM (Generation Mode)")
+        else:
+            # 2. 嵌入任务 (Embedding) -> 使用 Ollama
+            # 注意：确保 sci_platform_fast.py 里嵌入任务传进来的 server_url 是 Ollama 的端口 (如 11434)
+            current_platform = ModelPlatformType.OLLAMA
+            current_config = {}
+            print(f"  -> Selected Backend: Ollama (Embedding Mode)")
+
+        # 使用动态确定的 platform 创建后端
+        self.model_backend: BaseModelBackend = ModelFactory.create(
+            model_platform=current_platform,
+            model_type=self.model_type,
+            embed_model_type=self.embed_model_type,
+            url=server_url,
+            model_config_dict=current_config,
+        )
+
+        if shared_memory is None:
+            self.shared_memory = SharedMemory()
+        else:
+            self.shared_memory = shared_memory
+
+    def run(self):
+        while self.alive:
+            if self.shared_memory.Busy and not self.shared_memory.Working:
+                self.shared_memory.Working = True
+                try:
+                    # 根据任务类型调用不同的方法
+                    if self.embed_model_type is None:
+                        # 对话生成：调用 run
+                        response = self.model_backend.run(
+                            self.shared_memory.Message)
+                        self.shared_memory.Response = response
+                    else:
+                        # 向量嵌入：调用 embed_run
+                        # 注意：只有 OllamaModel 等支持嵌入的模型才有这个方法
+                        response = self.model_backend.embed_run(
+                            self.shared_memory.Message)
+                        self.shared_memory.Response = response
+                except Exception as e:
+                    print(f'Receive Response Exception on {self.server_url}:', str(e))
+                    if self.embed_model_type is None:
+                        self.shared_memory.Response = "No response (Error)."
+                    else:
+                        self.shared_memory.Response = None
+                
+                self.shared_memory.Done = True
+                self.count += 1
+                thread_log.info(f"Thread {self.server_url}: {self.count} finished.")
+
+            sleep(0.15)
